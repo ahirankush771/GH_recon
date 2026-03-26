@@ -1,506 +1,484 @@
-import { useState, useEffect, useRef } from "react";
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>GH_RECON // GitHub Intelligence Framework</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@700;900&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-track{background:#0a0f0a}
+::-webkit-scrollbar-thumb{background:#00ff41;border-radius:2px}
+body{
+  background:#050a05;
+  min-height:100vh;
+  font-family:'Share Tech Mono',monospace;
+  color:#00ff41;
+  overflow-x:hidden;
+}
+.scanline{
+  position:fixed;top:0;left:0;right:0;height:2px;
+  background:rgba(0,255,65,0.07);pointer-events:none;z-index:999;
+  animation:scanline 4s linear infinite;
+}
+@keyframes scanline{0%{transform:translateY(-100%)}100%{transform:translateY(100vh)}}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+@keyframes pulse{0%,100%{box-shadow:0 0 5px #00ff41,0 0 10px #00ff41}50%{box-shadow:0 0 20px #00ff41,0 0 40px #00ff4166}}
+@keyframes slideIn{from{opacity:0;transform:translateX(-10px)}to{opacity:1;transform:translateX(0)}}
 
-const LANG_COLORS = {
-  JavaScript: "#f1e05a", Python: "#3572A5", TypeScript: "#2b7489",
-  C: "#555555", "C++": "#f34b7d", Java: "#b07219", Ruby: "#701516",
-  Go: "#00ADD8", Rust: "#dea584", Shell: "#89e051", HTML: "#e34c26",
-  CSS: "#563d7c", PHP: "#4F5D95", Assembly: "#6E4C13", Kotlin: "#F18E33",
-};
+.cursor{animation:blink 1s step-end infinite;}
 
-const fmtNum = (n) => n >= 1000 ? (n / 1000).toFixed(1) + "k" : n;
+.wrap{max-width:1100px;margin:0 auto;padding:20px 16px;position:relative;z-index:1;}
 
-function Typewriter({ text, speed = 30, onDone }) {
-  const [displayed, setDisplayed] = useState("");
-  useEffect(() => {
-    setDisplayed("");
-    let i = 0;
-    const timer = setInterval(() => {
-      if (i <= text.length) { setDisplayed(text.slice(0, i)); i++; }
-      else { clearInterval(timer); onDone?.(); }
-    }, speed);
-    return () => clearInterval(timer);
-  }, [text]);
-  return <span>{displayed}<span className="cursor">█</span></span>;
+.header-title{
+  font-family:'Orbitron',monospace;
+  font-size:clamp(22px,6vw,44px);
+  font-weight:900;color:#00ff41;
+  text-shadow:0 0 20px #00ff41,0 0 40px #00ff4166;
+  letter-spacing:4px;text-align:center;
+  margin-top:30px;
+}
+.header-sub{
+  font-family:'Share Tech Mono',monospace;
+  color:#00882a;text-align:center;font-size:11px;
+  letter-spacing:3px;margin-top:6px;
 }
 
-export default function GitHubTool() {
-  const [query, setQuery] = useState("");
-  const [user, setUser] = useState(null);
-  const [repos, setRepos] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [phase, setPhase] = useState("idle");
-  const [logs, setLogs] = useState([]);
-  const [activeRepo, setActiveRepo] = useState(null);
-  const [sortBy, setSortBy] = useState("stars");
-  const inputRef = useRef();
+.search-wrap{
+  display:flex;gap:8px;margin-top:28px;
+  border:1px solid #00ff4144;background:#050f05;
+  padding:12px 16px;position:relative;
+  animation:pulse 3s ease-in-out infinite;
+  align-items:center;
+}
+.search-wrap::before{content:'> ';color:#00ff41;font-size:16px;}
+#searchInput{
+  flex:1;background:transparent;border:none;outline:none;
+  color:#00ff41;font-family:'Share Tech Mono',monospace;
+  font-size:16px;caret-color:#00ff41;
+}
+#searchInput::placeholder{color:#005510;}
+#searchBtn{
+  background:#00ff41;color:#000;border:none;cursor:pointer;
+  font-family:'Orbitron',monospace;font-weight:700;
+  font-size:11px;padding:8px 18px;letter-spacing:2px;
+  text-transform:uppercase;transition:all 0.2s;
+}
+#searchBtn:hover{background:#00cc33;box-shadow:0 0 20px #00ff41;}
+#searchBtn:disabled{opacity:0.4;cursor:not-allowed;}
 
-  const addLog = (msg, type = "info") => {
-    setLogs(prev => [...prev.slice(-8), { msg, type, id: Date.now() + Math.random() }]);
-  };
+.log-panel{
+  border-left:2px solid #00ff4122;padding:8px 12px;
+  margin-top:10px;font-size:11px;
+}
+.log-info{color:#005522;}
+.log-success{color:#00ff41;}
+.log-error{color:#ff4141;}
 
-  const fetchUser = async (username) => {
-    setLoading(true); setError(""); setUser(null); setRepos([]); setPhase("scanning");
-    setLogs([]);
-    addLog(`[INIT] Target acquired: ${username}`, "success");
-    addLog(`[SCAN] Probing GitHub API endpoints...`, "info");
-    try {
-      const [uRes, rRes] = await Promise.all([
-        fetch(`https://api.github.com/users/${username}`),
-        fetch(`https://api.github.com/users/${username}/repos?per_page=100&sort=pushed`)
-      ]);
-      if (!uRes.ok) throw new Error(uRes.status === 404 ? "Target not found in database" : `API Error ${uRes.status}`);
-      const uData = await uRes.json();
-      const rData = rRes.ok ? await rRes.json() : [];
-      addLog(`[DATA] Profile exfiltrated successfully`, "success");
-      addLog(`[REPO] ${rData.length} repositories indexed`, "success");
-      addLog(`[DONE] Recon complete. Standing by.`, "success");
-      setUser(uData);
-      setRepos(rData);
-      setPhase("done");
-    } catch (e) {
-      addLog(`[ERR] ${e.message}`, "error");
-      setError(e.message);
-      setPhase("idle");
-    } finally { setLoading(false); }
-  };
+.error-box{
+  border:1px solid #ff414144;background:#ff000008;
+  color:#ff4141;padding:12px 16px;margin-top:12px;font-size:12px;
+}
 
-  const handleSearch = (e) => {
-    e.preventDefault();
-    if (query.trim()) fetchUser(query.trim());
-  };
+.profile-grid{
+  display:grid;grid-template-columns:260px 1fr;
+  gap:20px;margin-top:24px;animation:fadeIn 0.5s ease;
+}
+@media(max-width:700px){.profile-grid{grid-template-columns:1fr;}}
 
-  const topLangs = repos.reduce((acc, r) => {
-    if (r.language) acc[r.language] = (acc[r.language] || 0) + 1;
+.panel{
+  border:1px solid #00ff4122;
+  background:linear-gradient(180deg,#050f0506 0%,#00050506 100%);
+  padding:16px;position:relative;
+}
+.panel::before{
+  content:'';position:absolute;top:-1px;left:0;right:0;
+  height:1px;background:linear-gradient(90deg,transparent,#00ff41,transparent);
+}
+.panel-title{
+  font-family:'Orbitron',monospace;font-size:10px;
+  letter-spacing:3px;color:#00aa2b;margin-bottom:14px;
+  text-transform:uppercase;border-bottom:1px solid #00ff4111;
+  padding-bottom:8px;
+}
+
+.avatar-ring{
+  width:100px;height:100px;border-radius:50%;
+  border:2px solid #00ff41;
+  box-shadow:0 0 20px #00ff4166,inset 0 0 20px #00ff4111;
+  margin:0 auto 12px;display:block;
+  filter:grayscale(20%) contrast(1.1);
+}
+.username-display{
+  font-family:'Orbitron',monospace;font-size:15px;font-weight:700;
+  color:#00ff41;text-align:center;text-shadow:0 0 10px #00ff41;
+}
+.name-display{text-align:center;color:#006622;font-size:12px;margin-top:4px;}
+
+.stat-row{
+  display:flex;justify-content:space-between;
+  padding:6px 0;border-bottom:1px solid #00ff410a;font-size:11px;
+}
+.stat-label{color:#005510;}
+.stat-val{color:#00ff41;font-weight:bold;}
+
+.lang-bar{height:6px;display:flex;overflow:hidden;margin:4px 0 10px;}
+.lang-seg{height:100%;transition:width 0.5s ease;}
+.lang-item{display:flex;align-items:center;gap:6px;font-size:10px;padding:3px 0;}
+.lang-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+.lang-name{color:#00cc33;flex:1;}
+.lang-count{color:#005510;}
+
+.metrics-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px;}
+.metric-box{border:1px solid #00ff4122;padding:10px;text-align:center;background:#00ff410a;}
+.metric-val{
+  font-family:'Orbitron',monospace;font-size:20px;font-weight:900;
+  color:#00ff41;text-shadow:0 0 15px #00ff41;
+}
+.metric-lbl{font-size:9px;color:#005510;letter-spacing:2px;margin-top:2px;}
+
+.sort-bar{display:flex;gap:6px;margin-bottom:10px;}
+.sort-btn{
+  background:transparent;border:1px solid #00ff4122;color:#005510;
+  font-family:'Share Tech Mono',monospace;font-size:10px;
+  padding:4px 10px;cursor:pointer;letter-spacing:1px;
+  text-transform:uppercase;transition:all 0.2s;
+}
+.sort-btn.active,.sort-btn:hover{background:#00ff4111;color:#00ff41;border-color:#00ff4155;}
+
+.repo-list{display:flex;flex-direction:column;gap:6px;max-height:440px;overflow-y:auto;padding-right:2px;}
+.repo-card{
+  border:1px solid #00ff4115;padding:10px 12px;
+  cursor:pointer;transition:all 0.15s;position:relative;
+  border-left:2px solid transparent;
+}
+.repo-card:hover,.repo-card.active{
+  border-color:#00ff4155;background:#00ff4108;
+  border-left-color:#00ff41;transform:translateX(3px);
+}
+.repo-name{color:#00ff41;font-size:12px;font-weight:bold;}
+.repo-desc{color:#004411;font-size:10px;margin-top:3px;line-height:1.4;}
+.repo-meta{display:flex;gap:10px;margin-top:6px;align-items:center;flex-wrap:wrap;}
+.repo-tag{font-size:9px;padding:1px 6px;border:1px solid;letter-spacing:1px;}
+.tag-stars{color:#ffcc00;border-color:#ffcc0044;}
+.tag-forks{color:#00aaff;border-color:#00aaff44;}
+.tag-fork{color:#003308;border-color:#00330833;font-size:8px;}
+.tag-date{font-size:9px;color:#003308;margin-left:auto;}
+
+.detail-panel{margin-top:20px;animation:fadeIn 0.3s ease;}
+.link-btn{
+  display:inline-block;margin-top:10px;
+  background:transparent;border:1px solid #00ff4133;
+  color:#00aa2b;font-family:'Share Tech Mono',monospace;
+  font-size:10px;padding:6px 14px;cursor:pointer;
+  letter-spacing:2px;text-transform:uppercase;
+  text-decoration:none;transition:all 0.2s;margin-right:6px;
+}
+.link-btn:hover{background:#00ff4111;border-color:#00ff41;color:#00ff41;}
+
+.bio-box{
+  color:#006622;font-size:11px;line-height:1.6;font-style:italic;
+  border-left:2px solid #00ff4122;padding-left:10px;margin-bottom:12px;
+}
+.badge-grid{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;}
+.badge{font-size:9px;padding:2px 8px;border:1px solid #00ff4122;color:#007722;letter-spacing:1px;}
+
+.empty-state{text-align:center;padding:70px 20px;color:#002208;}
+.empty-icon{font-size:52px;margin-bottom:16px;filter:drop-shadow(0 0 20px #00ff4133);}
+.empty-title{font-family:'Orbitron',monospace;font-size:12px;letter-spacing:4px;margin-bottom:8px;}
+.empty-hint{font-size:10px;color:#003308;letter-spacing:2px;margin-top:14px;}
+.try-link{color:#006622;cursor:pointer;text-decoration:underline;}
+.try-link:hover{color:#00ff41;}
+
+.footer{text-align:center;font-size:9px;color:#001a07;margin-top:40px;letter-spacing:2px;padding-bottom:24px;}
+#loadingDots::after{content:'';animation:dots 1.2s steps(4,end) infinite;}
+@keyframes dots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}100%{content:'....'}}</style>
+</head>
+<body>
+<div class="scanline"></div>
+<div class="wrap">
+
+  <!-- Header -->
+  <div class="header-title">GH_RECON</div>
+  <div class="header-sub">// GITHUB INTELLIGENCE FRAMEWORK v2.1 //</div>
+
+  <!-- Search -->
+  <div class="search-wrap">
+    <input id="searchInput" type="text" placeholder="enter target username..." autocomplete="off"/>
+    <button id="searchBtn" onclick="doSearch()">EXECUTE</button>
+  </div>
+
+  <!-- Logs -->
+  <div class="log-panel" id="logPanel" style="display:none;"></div>
+
+  <!-- Error -->
+  <div class="error-box" id="errorBox" style="display:none;"></div>
+
+  <!-- Results -->
+  <div id="results" style="display:none;">
+    <div class="profile-grid">
+      <!-- Left -->
+      <div>
+        <div class="panel" id="profilePanel"></div>
+        <div class="panel" id="langPanel" style="margin-top:12px;display:none;"></div>
+      </div>
+      <!-- Right -->
+      <div>
+        <div class="panel" id="metricsPanel" style="margin-bottom:12px;"></div>
+        <div class="panel" id="repoPanel"></div>
+        <div id="detailPanel"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Empty state -->
+  <div class="empty-state" id="emptyState">
+    <div class="empty-icon">⬡</div>
+    <div class="empty-title">AWAITING TARGET INPUT</div>
+    <div style="font-size:11px;color:#003308;">Enter a GitHub username to initiate recon sequence</div>
+    <div class="empty-hint">
+      TRY:
+      <span class="try-link" onclick="tryUser('torvalds')">torvalds</span> ·
+      <span class="try-link" onclick="tryUser('ahirankush771')">ahirankush771</span> ·
+      <span class="try-link" onclick="tryUser('antirez')">antirez</span>
+    </div>
+  </div>
+
+  <div class="footer">GH_RECON // GITHUB INTELLIGENCE FRAMEWORK // POWERED BY GITHUB PUBLIC API</div>
+</div>
+
+<script>
+const LANG_COLORS = {
+  JavaScript:"#f1e05a",Python:"#3572A5",TypeScript:"#2b7489",
+  C:"#555555","C++":"#f34b7d",Java:"#b07219",Ruby:"#701516",
+  Go:"#00ADD8",Rust:"#dea584",Shell:"#89e051",HTML:"#e34c26",
+  CSS:"#563d7c",PHP:"#4F5D95",Assembly:"#6E4C13",Kotlin:"#F18E33"
+};
+
+let allRepos = [];
+let activeRepoId = null;
+let currentSort = "stars";
+
+function fmtNum(n){ return n>=1000?(n/1000).toFixed(1)+'k':n; }
+
+function tryUser(u){
+  document.getElementById('searchInput').value = u;
+  doSearch();
+}
+
+function addLog(msg, type='info'){
+  const p = document.getElementById('logPanel');
+  p.style.display = 'block';
+  const d = document.createElement('div');
+  d.className = 'log-' + type;
+  d.textContent = msg;
+  p.appendChild(d);
+  p.scrollTop = p.scrollHeight;
+}
+
+function clearLogs(){
+  const p = document.getElementById('logPanel');
+  p.innerHTML = '';
+  p.style.display = 'none';
+}
+
+function showError(msg){
+  const e = document.getElementById('errorBox');
+  e.textContent = '[ERR] ' + msg + ' — target may be offline or non-existent';
+  e.style.display = 'block';
+}
+
+function hideError(){ document.getElementById('errorBox').style.display='none'; }
+
+async function doSearch(){
+  const q = document.getElementById('searchInput').value.trim();
+  if(!q) return;
+  clearLogs(); hideError();
+  document.getElementById('results').style.display='none';
+  document.getElementById('emptyState').style.display='none';
+  const btn = document.getElementById('searchBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span id="loadingDots">SCANNING</span>';
+
+  addLog(`[INIT] Target acquired: ${q}`, 'success');
+  addLog(`[SCAN] Probing GitHub API endpoints...`, 'info');
+
+  try {
+    const [uRes, rRes] = await Promise.all([
+      fetch(`https://api.github.com/users/${q}`),
+      fetch(`https://api.github.com/users/${q}/repos?per_page=100&sort=pushed`)
+    ]);
+    if(!uRes.ok) throw new Error(uRes.status===404?'Target not found in database':`API Error ${uRes.status}`);
+    const user = await uRes.json();
+    const repos = rRes.ok ? await rRes.json() : [];
+    addLog(`[DATA] Profile exfiltrated successfully`, 'success');
+    addLog(`[REPO] ${repos.length} repositories indexed`, 'success');
+    addLog(`[DONE] Recon complete. Standing by.`, 'success');
+    allRepos = repos;
+    activeRepoId = null;
+    renderProfile(user, repos);
+    document.getElementById('results').style.display='block';
+  } catch(e){
+    addLog(`[ERR] ${e.message}`, 'error');
+    showError(e.message);
+    document.getElementById('emptyState').style.display='block';
+  } finally {
+    btn.disabled=false;
+    btn.textContent='EXECUTE';
+  }
+}
+
+function renderProfile(user, repos){
+  // Profile panel
+  const totalStars = repos.reduce((s,r)=>s+r.stargazers_count,0);
+  const totalForks = repos.reduce((s,r)=>s+r.forks_count,0);
+
+  document.getElementById('profilePanel').innerHTML = `
+    <div class="panel-title">[SYS] Target Profile</div>
+    <img src="${user.avatar_url}" class="avatar-ring" alt="avatar"/>
+    <div class="username-display">@${user.login}</div>
+    ${user.name?`<div class="name-display">${user.name}</div>`:''}
+    <div style="margin-top:14px;">
+      ${[
+        ['FOLLOWERS', fmtNum(user.followers)],
+        ['FOLLOWING', fmtNum(user.following)],
+        ['PUBLIC REPOS', user.public_repos],
+        ['PUBLIC GISTS', user.public_gists],
+        ['ACCOUNT TYPE', user.type?.toUpperCase()],
+        ['HIREABLE', user.hireable?'YES':user.hireable===false?'NO':'UNKNOWN'],
+        ['LOCATION', user.location||'UNDISCLOSED'],
+        ['COMPANY', user.company||'INDEPENDENT'],
+      ].map(([k,v])=>`
+        <div class="stat-row">
+          <span class="stat-label">${k}</span>
+          <span class="stat-val">${v}</span>
+        </div>`).join('')}
+    </div>
+    ${user.blog?`<a href="${user.blog.startsWith('http')?user.blog:'https://'+user.blog}" target="_blank" class="link-btn" style="display:block;text-align:center;margin-top:12px;">WEBSITE ↗</a>`:''}
+    <a href="${user.html_url}" target="_blank" class="link-btn" style="display:block;text-align:center;margin-top:6px;">GITHUB PROFILE ↗</a>
+  `;
+
+  // Lang panel
+  const topLangs = repos.reduce((acc,r)=>{
+    if(r.language) acc[r.language]=(acc[r.language]||0)+1;
     return acc;
-  }, {});
-  const langList = Object.entries(topLangs).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  },{});
+  const langList = Object.entries(topLangs).sort((a,b)=>b[1]-a[1]).slice(0,6);
+  if(langList.length>0){
+    const total = langList.reduce((s,[,c])=>s+c,0);
+    document.getElementById('langPanel').style.display='block';
+    document.getElementById('langPanel').innerHTML = `
+      <div class="panel-title">[LANG] Stack Analysis</div>
+      <div class="lang-bar">
+        ${langList.map(([l,c])=>`<div class="lang-seg" style="width:${(c/total*100).toFixed(1)}%;background:${LANG_COLORS[l]||'#00ff41'}"></div>`).join('')}
+      </div>
+      ${langList.map(([l,c])=>`
+        <div class="lang-item">
+          <div class="lang-dot" style="background:${LANG_COLORS[l]||'#00ff41'}"></div>
+          <span class="lang-name">${l}</span>
+          <span class="lang-count">${c} repos</span>
+        </div>`).join('')}
+    `;
+  }
 
-  const sortedRepos = [...repos].sort((a, b) => {
-    if (sortBy === "stars") return b.stargazers_count - a.stargazers_count;
-    if (sortBy === "forks") return b.forks_count - a.forks_count;
-    if (sortBy === "updated") return new Date(b.pushed_at) - new Date(a.pushed_at);
-    return 0;
+  // Metrics
+  document.getElementById('metricsPanel').innerHTML = `
+    <div class="panel-title">[METRICS] Aggregate Stats</div>
+    <div class="metrics-grid">
+      <div class="metric-box"><div class="metric-val">${repos.length}</div><div class="metric-lbl">REPOS</div></div>
+      <div class="metric-box"><div class="metric-val">${fmtNum(totalStars)}</div><div class="metric-lbl">TOTAL STARS</div></div>
+      <div class="metric-box"><div class="metric-val">${fmtNum(totalForks)}</div><div class="metric-lbl">TOTAL FORKS</div></div>
+    </div>
+    ${user.bio?`<div class="bio-box">// ${user.bio}</div>`:''}
+  `;
+
+  // Repos
+  renderRepos(repos);
+}
+
+function renderRepos(repos){
+  const sorted = [...repos].sort((a,b)=>{
+    if(currentSort==='stars') return b.stargazers_count-a.stargazers_count;
+    if(currentSort==='forks') return b.forks_count-a.forks_count;
+    return new Date(b.pushed_at)-new Date(a.pushed_at);
   });
 
-  const totalStars = repos.reduce((s, r) => s + r.stargazers_count, 0);
-  const totalForks = repos.reduce((s, r) => s + r.forks_count, 0);
+  document.getElementById('repoPanel').innerHTML = `
+    <div class="panel-title">[REPO] Repository Index — ${repos.length} records</div>
+    <div class="sort-bar">
+      ${['stars','forks','updated'].map(s=>`
+        <button class="sort-btn${currentSort===s?' active':''}" onclick="setSort('${s}')">${s}</button>
+      `).join('')}
+    </div>
+    <div class="repo-list">
+      ${sorted.map(r=>`
+        <div class="repo-card${activeRepoId===r.id?' active':''}" onclick="toggleRepo(${r.id})">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+            <div class="repo-name">/${r.name}</div>
+            ${r.fork?'<span class="repo-tag tag-fork">FORK</span>':''}
+          </div>
+          ${r.description?`<div class="repo-desc">${r.description}</div>`:''}
+          <div class="repo-meta">
+            ${r.language?`<span class="repo-tag" style="color:${LANG_COLORS[r.language]||'#00cc33'};border-color:${LANG_COLORS[r.language]||'#00cc33'}44">${r.language}</span>`:''}
+            <span class="repo-tag tag-stars">★ ${r.stargazers_count}</span>
+            <span class="repo-tag tag-forks">⑂ ${r.forks_count}</span>
+            <span class="tag-date">${new Date(r.pushed_at).toLocaleDateString()}</span>
+          </div>
+        </div>`).join('')}
+    </div>
+  `;
+  renderDetail();
+}
 
-  return (
-    <div style={{
-      background: "#050a05",
-      minHeight: "100vh",
-      fontFamily: "'Courier New', monospace",
-      color: "#00ff41",
-      padding: "0",
-      overflowX: "hidden",
-    }}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@700;900&display=swap');
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        ::-webkit-scrollbar { width: 4px; } 
-        ::-webkit-scrollbar-track { background: #0a0f0a; }
-        ::-webkit-scrollbar-thumb { background: #00ff41; border-radius: 2px; }
+function setSort(s){
+  currentSort = s;
+  renderRepos(allRepos);
+}
 
-        .cursor { animation: blink 1s step-end infinite; }
-        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+function toggleRepo(id){
+  activeRepoId = (activeRepoId===id)?null:id;
+  renderRepos(allRepos);
+}
 
-        @keyframes scanline {
-          0% { transform: translateY(-100%); }
-          100% { transform: translateY(100vh); }
-        }
-        @keyframes glitch {
-          0%,100% { clip-path: inset(0 0 100% 0); transform: translateX(0); }
-          20% { clip-path: inset(20% 0 60% 0); transform: translateX(-4px); }
-          40% { clip-path: inset(60% 0 20% 0); transform: translateX(4px); }
-          60% { clip-path: inset(40% 0 40% 0); transform: translateX(-2px); }
-          80% { clip-path: inset(80% 0 5% 0); transform: translateX(2px); }
-        }
-        @keyframes fadeIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
-        @keyframes pulse { 0%,100%{box-shadow:0 0 5px #00ff41,0 0 10px #00ff41} 50%{box-shadow:0 0 20px #00ff41,0 0 40px #00ff4188} }
-        @keyframes matrix {
-          0% { opacity: 0; transform: translateY(-20px); }
-          10% { opacity: 1; }
-          90% { opacity: 1; }
-          100% { opacity: 0; transform: translateY(20px); }
-        }
-        
-        .scanline {
-          position: fixed; top: 0; left: 0; right: 0;
-          height: 2px; background: rgba(0,255,65,0.08);
-          pointer-events: none; z-index: 999;
-          animation: scanline 4s linear infinite;
-        }
-        .noise {
-          position: fixed; inset: 0; pointer-events: none; z-index: 998;
-          background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
-          opacity: 0.4;
-        }
-        .main-wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px; position: relative; z-index: 1; }
-        
-        .header-title {
-          font-family: 'Orbitron', monospace;
-          font-size: clamp(22px, 5vw, 42px);
-          font-weight: 900;
-          color: #00ff41;
-          text-shadow: 0 0 20px #00ff41, 0 0 40px #00ff4166;
-          letter-spacing: 4px;
-          text-align: center;
-        }
-        .header-sub {
-          font-family: 'Share Tech Mono', monospace;
-          color: #00aa2b;
-          text-align: center;
-          font-size: 12px;
-          letter-spacing: 3px;
-          margin-top: 6px;
-        }
-        .search-wrap {
-          display: flex; gap: 8px; margin-top: 28px;
-          border: 1px solid #00ff4144;
-          background: #050f05;
-          padding: 12px 16px;
-          position: relative;
-          animation: pulse 3s ease-in-out infinite;
-        }
-        .search-wrap::before {
-          content: '> '; color: #00ff41; font-size: 16px; line-height: 2;
-        }
-        .search-input {
-          flex: 1; background: transparent; border: none; outline: none;
-          color: #00ff41; font-family: 'Share Tech Mono', monospace;
-          font-size: 16px; caret-color: #00ff41;
-        }
-        .search-input::placeholder { color: #005510; }
-        .search-btn {
-          background: #00ff41; color: #000; border: none; cursor: pointer;
-          font-family: 'Orbitron', monospace; font-weight: 700;
-          font-size: 11px; padding: 8px 16px; letter-spacing: 2px;
-          text-transform: uppercase; transition: all 0.2s;
-        }
-        .search-btn:hover { background: #00cc33; box-shadow: 0 0 20px #00ff41; }
-        .search-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-
-        .log-panel {
-          background: #00050000;
-          border-left: 2px solid #00ff4122;
-          padding: 8px 12px;
-          margin-top: 12px;
-          font-size: 11px;
-          font-family: 'Share Tech Mono', monospace;
-        }
-        .log-info { color: #005522; }
-        .log-success { color: #00ff41; }
-        .log-error { color: #ff4141; }
-        .log-item { animation: matrix 0.3s ease forwards; }
-
-        .profile-grid {
-          display: grid;
-          grid-template-columns: 260px 1fr;
-          gap: 20px;
-          margin-top: 24px;
-          animation: fadeIn 0.5s ease;
-        }
-        @media(max-width:700px){.profile-grid{grid-template-columns:1fr;}}
-
-        .panel {
-          border: 1px solid #00ff4122;
-          background: linear-gradient(180deg, #050f0500 0%, #00050500 100%);
-          padding: 16px;
-          position: relative;
-          backdrop-filter: blur(4px);
-        }
-        .panel::before {
-          content: ''; position: absolute; top: -1px; left: 0; right: 0;
-          height: 1px; background: linear-gradient(90deg, transparent, #00ff41, transparent);
-        }
-        .panel-title {
-          font-family: 'Orbitron', monospace;
-          font-size: 10px; letter-spacing: 3px;
-          color: #00aa2b; margin-bottom: 14px;
-          text-transform: uppercase;
-          border-bottom: 1px solid #00ff4111;
-          padding-bottom: 8px;
-        }
-
-        .avatar-ring {
-          width: 100px; height: 100px;
-          border-radius: 50%;
-          border: 2px solid #00ff41;
-          box-shadow: 0 0 20px #00ff4166, inset 0 0 20px #00ff4111;
-          margin: 0 auto 12px;
-          display: block;
-          filter: grayscale(20%) contrast(1.1);
-        }
-        .username-display {
-          font-family: 'Orbitron', monospace;
-          font-size: 16px; font-weight: 700;
-          color: #00ff41; text-align: center;
-          text-shadow: 0 0 10px #00ff41;
-        }
-        .name-display {
-          text-align: center; color: #006622; font-size: 12px; margin-top: 4px;
-        }
-        .stat-row {
-          display: flex; justify-content: space-between;
-          padding: 6px 0; border-bottom: 1px solid #00ff410a;
-          font-size: 11px;
-        }
-        .stat-label { color: #005510; }
-        .stat-value { color: #00ff41; font-weight: bold; }
-
-        .lang-bar {
-          height: 6px; border-radius: 0; margin: 2px 0;
-          display: flex; overflow: hidden;
-        }
-        .lang-seg { height: 100%; transition: width 0.5s ease; }
-        .lang-item {
-          display: flex; align-items: center;
-          gap: 6px; font-size: 10px; padding: 3px 0;
-        }
-        .lang-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-        .lang-name { color: #00cc33; flex: 1; }
-        .lang-count { color: #005510; }
-
-        .metrics-grid {
-          display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
-          margin-bottom: 16px;
-        }
-        .metric-box {
-          border: 1px solid #00ff4122;
-          padding: 10px; text-align: center;
-          background: #00ff410a;
-        }
-        .metric-val {
-          font-family: 'Orbitron', monospace;
-          font-size: 20px; font-weight: 900;
-          color: #00ff41;
-          text-shadow: 0 0 15px #00ff41;
-        }
-        .metric-lbl { font-size: 9px; color: #005510; letter-spacing: 2px; margin-top: 2px; }
-
-        .sort-bar {
-          display: flex; gap: 6px; margin-bottom: 10px;
-        }
-        .sort-btn {
-          background: transparent; border: 1px solid #00ff4122;
-          color: #005510; font-family: 'Share Tech Mono', monospace;
-          font-size: 10px; padding: 4px 10px; cursor: pointer;
-          letter-spacing: 1px; text-transform: uppercase;
-          transition: all 0.2s;
-        }
-        .sort-btn.active, .sort-btn:hover { 
-          background: #00ff4111; color: #00ff41; border-color: #00ff4155;
-        }
-
-        .repo-list { display: flex; flex-direction: column; gap: 6px; max-height: 420px; overflow-y: auto; }
-        .repo-card {
-          border: 1px solid #00ff4115;
-          padding: 10px 12px;
-          cursor: pointer;
-          transition: all 0.15s;
-          position: relative;
-          background: transparent;
-        }
-        .repo-card:hover, .repo-card.active {
-          border-color: #00ff4155;
-          background: #00ff4108;
-          transform: translateX(3px);
-        }
-        .repo-card::before {
-          content: ''; position: absolute; left: 0; top: 0; bottom: 0;
-          width: 0; background: #00ff41;
-          transition: width 0.15s;
-        }
-        .repo-card:hover::before, .repo-card.active::before { width: 2px; }
-        .repo-name { color: #00ff41; font-size: 12px; font-weight: bold; }
-        .repo-desc { color: #004411; font-size: 10px; margin-top: 3px; line-height: 1.4; }
-        .repo-meta { display: flex; gap: 12px; margin-top: 6px; align-items: center; flex-wrap: wrap; }
-        .repo-tag {
-          font-size: 9px; padding: 1px 6px;
-          border: 1px solid; border-radius: 0;
-          letter-spacing: 1px;
-        }
-        .repo-stars { color: #ffcc00; border-color: #ffcc0044; }
-        .repo-forks { color: #00aaff; border-color: #00aaff44; }
-        .repo-lang { border-color: transparent; }
-        .forked-badge {
-          font-size: 8px; color: #003308; border: 1px solid #00330844;
-          padding: 1px 5px; letter-spacing: 1px;
-        }
-        .detail-panel {
-          margin-top: 20px;
-          animation: fadeIn 0.3s ease;
-        }
-        .detail-url {
-          color: #0066ff; font-size: 11px;
-          word-break: break-all;
-          text-decoration: none;
-        }
-        .detail-url:hover { color: #00aaff; }
-        
-        .error-box {
-          border: 1px solid #ff414144;
-          background: #ff000008;
-          color: #ff4141;
-          padding: 12px 16px;
-          margin-top: 12px;
-          font-size: 12px;
-        }
-        .empty-state {
-          text-align: center; padding: 60px 20px;
-          color: #002208;
-        }
-        .empty-icon {
-          font-size: 48px; margin-bottom: 16px;
-          filter: drop-shadow(0 0 20px #00ff4133);
-        }
-        .badge-grid {
-          display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;
-        }
-        .badge {
-          font-size: 9px; padding: 2px 8px;
-          border: 1px solid #00ff4122; color: #007722;
-          letter-spacing: 1px;
-        }
-        .link-btn {
-          display: inline-block; margin-top: 10px;
-          background: transparent; border: 1px solid #00ff4133;
-          color: #00aa2b; font-family: 'Share Tech Mono', monospace;
-          font-size: 10px; padding: 6px 14px; cursor: pointer;
-          letter-spacing: 2px; text-transform: uppercase;
-          text-decoration: none; transition: all 0.2s;
-        }
-        .link-btn:hover { background: #00ff4111; border-color: #00ff41; color: #00ff41; }
-
-        .loading-dots::after {
-          content: '';
-          animation: dots 1.2s steps(4, end) infinite;
-        }
-        @keyframes dots {
-          0%{content:''} 25%{content:'.'} 50%{content:'..'} 75%{content:'...'} 100%{content:'....'}
-        }
-      `}</style>
-
-      <div className="scanline" />
-      <div className="noise" />
-
-      <div className="main-wrap">
-        {/* Header */}
-        <div style={{ paddingTop: 30, paddingBottom: 8 }}>
-          <div className="header-title">GH_RECON</div>
-          <div className="header-sub">// GITHUB INTELLIGENCE FRAMEWORK v2.1 //</div>
+function renderDetail(){
+  const dp = document.getElementById('detailPanel');
+  if(!activeRepoId){ dp.innerHTML=''; return; }
+  const r = allRepos.find(x=>x.id===activeRepoId);
+  if(!r){ dp.innerHTML=''; return; }
+  dp.innerHTML = `
+    <div class="detail-panel">
+      <div class="panel">
+        <div class="panel-title">[DETAIL] ${r.name}</div>
+        ${r.description?`<div style="color:#006622;font-size:12px;margin-bottom:10px;line-height:1.6;">${r.description}</div>`:''}
+        ${r.topics?.length?`<div class="badge-grid">${r.topics.map(t=>`<span class="badge">${t}</span>`).join('')}</div>`:''}
+        <div style="margin-top:10px;">
+          ${[
+            ['LICENSE', r.license?.spdx_id||'NONE'],
+            ['DEFAULT BRANCH', r.default_branch],
+            ['OPEN ISSUES', r.open_issues_count],
+            ['WATCHERS', r.watchers_count],
+            ['SIZE', r.size+' KB'],
+            ['VISIBILITY', r.private?'PRIVATE':'PUBLIC'],
+          ].map(([k,v])=>`
+            <div class="stat-row">
+              <span class="stat-label">${k}</span>
+              <span class="stat-val">${v}</span>
+            </div>`).join('')}
         </div>
+        <a href="${r.html_url}" target="_blank" class="link-btn">ACCESS REPO ↗</a>
+        ${r.homepage?`<a href="${r.homepage}" target="_blank" class="link-btn">LIVE DEMO ↗</a>`:''}
+      </div>
+    </div>
+  `;
+}
 
-        {/* Search */}
-        <form onSubmit={handleSearch}>
-          <div className="search-wrap">
-            <input
-              ref={inputRef}
-              className="search-input"
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-              placeholder="enter target username..."
-              autoFocus
-            />
-            <button className="search-btn" disabled={loading || !query.trim()}>
-              {loading ? <span className="loading-dots">SCANNING</span> : "EXECUTE"}
-            </button>
-          </div>
-        </form>
-
-        {/* Logs */}
-        {logs.length > 0 && (
-          <div className="log-panel">
-            {logs.map((l) => (
-              <div key={l.id} className={`log-item log-${l.type}`}>{l.msg}</div>
-            ))}
-          </div>
-        )}
-
-        {/* Error */}
-        {error && <div className="error-box">[ERR] {error} — target may be offline or non-existent</div>}
-
-        {/* Results */}
-        {user && (
-          <div className="profile-grid">
-            {/* Left: Profile */}
-            <div>
-              <div className="panel">
-                <div className="panel-title">[SYS] Target Profile</div>
-                <img src={user.avatar_url} alt="avatar" className="avatar-ring" />
-                <div className="username-display">@{user.login}</div>
-                {user.name && <div className="name-display">{user.name}</div>}
-
-                <div style={{ marginTop: 14 }}>
-                  {[
-                    ["FOLLOWERS", fmtNum(user.followers)],
-                    ["FOLLOWING", fmtNum(user.following)],
-                    ["PUBLIC REPOS", user.public_repos],
-                    ["PUBLIC GISTS", user.public_gists],
-                    ["ACCOUNT TYPE", user.type?.toUpperCase()],
-                    ["HIREABLE", user.hireable ? "YES" : user.hireable === false ? "NO" : "UNKNOWN"],
-                    ["LOCATION", user.location || "UNDISCLOSED"],
-                    ["COMPANY", user.company || "INDEPENDENT"],
-                  ].map(([k, v]) => (
-                    <div className="stat-row" key={k}>
-                      <span className="stat-label">{k}</span>
-                      <span className="stat-value">{v}</span>
-                    </div>
-                  ))}
-                </div>
-
-                {user.blog && (
-                  <a href={user.blog.startsWith("http") ? user.blog : "https://" + user.blog}
-                    target="_blank" rel="noreferrer" className="link-btn" style={{ display: "block", textAlign: "center", marginTop: 12 }}>
-                    WEBSITE ↗
-                  </a>
-                )}
-                <a href={user.html_url} target="_blank" rel="noreferrer"
-                  className="link-btn" style={{ display: "block", textAlign: "center", marginTop: 6 }}>
-                  GITHUB PROFILE ↗
-                </a>
-              </div>
-
-              {/* Languages */}
-              {langList.length > 0 && (
-                <div className="panel" style={{ marginTop: 12 }}>
-                  <div className="panel-title">[LANG] Stack Analysis</div>
-                  <div className="lang-bar">
-                    {langList.map(([lang, count]) => (
-                      <div key={lang} className="lang-seg"
-                        style={{
-                          width: `${(count / langList.reduce((s, [, c]) => s + c, 0)) * 100}%`,
-                          background: LANG_COLORS[lang] || "#00ff41"
-                        }} />
-                    ))}
-                  </div>
-                  <div style={{ marginTop: 10 }}>
-                    {langList.map(([lang, count]) => (
-                      <div className="lang-item" key={lang}>
-                        <div className="lang-dot" style={{ background: LANG_COLORS[lang] || "#00ff41" }} />
-                        <span className="lang-name">{lang}</span>
-                        <span className="lang-count">{count} repos</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Right: Repos */}
-            <div>
-              {/* Metrics */}
-              <div className="panel" style={{ marginBottom: 12 }}>
-                <div className="panel-title">[METRICS] Aggregate Stats</div>
-                <div className="metrics-grid">
-                  <div className="metric-box">
-                    <div className="metric-val">{repos.length}</div>
-                    <div className="metric-lbl">REPOS</div>
-                  </div>
-                  <div className="metric-box">
-                    <div className="metric-val">{fmtNum(totalStars)}</div>
-                    <div className="metric-lbl">TOTAL STARS</div>
-                  </div>
-                  <div className="metric-box">
+// Enter key support
+document.getElementById('searchInput').addEventListener('keydown', e=>{
+  if(e.key==='Enter') doSearch();
+});
+</script>
+</body>
+  </html>
   
